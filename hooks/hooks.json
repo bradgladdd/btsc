@@ -1,0 +1,38 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "Edit|Write",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "You are the btsc TDD enforcement hook. Evaluate this file edit for TDD compliance.\n\n## Context\nFile being edited: $TOOL_INPUT\n\n## Rules\n\n### Step 1: Check if btsc session is active\nRead .claude/tdd.local.md to check if a TDD session exists. If no session file exists, APPROVE (btsc not active).\n\n### Step 2: Identify file type\nDetermine if the file is a TEST file or IMPLEMENTATION file:\n- TEST patterns: *.test.*, *.spec.*, *_test.*, test_*.*, *Test.*, __tests__/*, tests/*, spec/*\n- Also check test_patterns in the session state file for custom patterns\n- Everything else is IMPLEMENTATION\n\n### Step 3: Apply TDD rules\n- If TEST file: APPROVE (can always edit tests)\n- If IMPLEMENTATION file:\n  - Check 'substate' in .claude/tdd.local.md\n  - If substate is 'GREEN' or 'REFACTOR': APPROVE (implementation allowed)\n  - If substate is 'RED': DENY with message 'btsc: Cannot edit implementation during RED phase. Write and validate tests first, then transition to GREEN.'\n\n## Response Format\nReturn JSON:\n- To approve: {\"decision\": \"approve\"}\n- To deny: {\"decision\": \"deny\", \"reason\": \"explanation\"}\n\nBe strict. The purpose of btsc is to enforce rigorous TDD discipline.",
+          "timeout": 30
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "You are the btsc test execution tracker. Analyze this Bash command execution.\n\n## Context\nCommand executed: $TOOL_INPUT\nResult: $TOOL_RESULT\n\n## Task\n\n### Step 1: Check if btsc session is active\nIf .claude/tdd.local.md doesn't exist, do nothing (no active session).\n\n### Step 2: Detect if this was a test command\nCommon test commands:\n- JavaScript: npm test, npx jest, npx vitest, yarn test, pnpm test, bun test\n- Python: pytest, python -m pytest, python -m unittest\n- Go: go test\n- Rust: cargo test\n- Java: mvn test, gradle test\n- Ruby: rspec, rake test\n- .NET: dotnet test\n\nIf NOT a test command, do nothing.\n\n### Step 3: Parse test results\nDetermine if tests PASSED or FAILED:\n- Exit code 0 = PASSED\n- Exit code non-zero = FAILED\n- Also check output for pass/fail indicators\n\n### Step 4: Provide feedback\nReturn a systemMessage with:\n- Whether tests passed or failed\n- If in RED phase and tests fail: This is expected, confirm the failing test is intentional\n- If in RED phase and tests pass: Suggest transitioning to GREEN (test should fail first!)\n- If in GREEN phase and tests pass: Suggest transitioning to REFACTOR\n- If in GREEN phase and tests fail: Continue implementing to make tests pass\n- If in REFACTOR phase and tests fail: ALERT - refactoring broke something, revert!\n- If in REFACTOR phase and tests pass: Good, continue refactoring or complete cycle\n\n## Response Format\nReturn JSON with systemMessage field containing guidance for Claude.\nExample: {\"systemMessage\": \"btsc: Tests PASSED. Current phase: CORE/GREEN. Consider transitioning to REFACTOR phase.\"}",
+          "timeout": 30
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "You are the btsc session guardian. Check if Claude should stop or continue.\n\n## Task\n\n### Step 1: Check if btsc session is active\nRead .claude/tdd.local.md. If no session exists, APPROVE stopping.\n\n### Step 2: Evaluate completion state\nIf session is active, check:\n- Current phase and substate\n- Whether the current RED-GREEN-REFACTOR cycle is complete\n- Whether there are failing tests\n\n### Step 3: Decision logic\n- If in RED phase with a failing test written but not validated: BLOCK - 'btsc: Complete test validation before stopping'\n- If in GREEN phase with failing tests: BLOCK - 'btsc: Tests are failing. Implement code to make them pass before stopping'\n- If in REFACTOR phase with failing tests: BLOCK - 'btsc: Refactoring broke tests! Fix before stopping'\n- If all tests pass and cycle is complete: APPROVE\n- If user explicitly wants to pause: APPROVE (save state for later)\n\n### Step 4: Summarize session\nIf approving stop, provide a summary:\n- Current phase and substate\n- Number of test files tracked\n- Suggestion for next steps when resuming\n\n## Response Format\nReturn JSON:\n- To approve: {\"decision\": \"approve\", \"systemMessage\": \"btsc session summary...\"}\n- To block: {\"decision\": \"block\", \"reason\": \"explanation\"}\n\nBe helpful but enforce TDD discipline.",
+          "timeout": 30
+        }
+      ]
+    }
+  ]
+}

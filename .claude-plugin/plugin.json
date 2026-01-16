@@ -1,0 +1,18 @@
+{
+  "name": "btsc",
+  "version": "0.1.0",
+  "description": "Big Tests, Small Code - A rigorous 5-phase TDD protocol that builds behavioral contracts through comprehensive testing, enabling aggressive code simplification",
+  "author": {
+    "name": "bradgladdd"
+  },
+  "repository": "https://github.com/bradgladdd/btsc",
+  "homepage": "https://github.com/bradgladdd/btsc",
+  "keywords": [
+    "tdd",
+    "testing",
+    "test-driven-development",
+    "refactoring",
+    "behavioral-contracts",
+    "code-quality"
+  ]
+}
