@@ -257,6 +257,13 @@ The loop ONLY ends when:
 2. All tests are passing
 3. You output: <promise>TDD_COMPLETE</promise>
 
+### Test Execution
+
+Always run tests with CI=true to prevent watch mode:
+- CI=true npm test
+- CI=true pytest
+- CI=true go test
+
 **The promise is IGNORED if you are not in SIMPLICITY phase.** You must complete CORE, EDGE, SECURITY, and PERFORMANCE first.
 
 ---

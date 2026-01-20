@@ -186,11 +186,19 @@ btsc works with any test framework. Detect test files by common patterns:
 - `__tests__/*` (Jest convention)
 
 **Common test commands:**
-- JavaScript: `npm test`, `npx jest`, `npx vitest`
-- Python: `pytest`, `python -m pytest`
+
+Prefix test commands with CI=true to prevent watch mode when applicable:
+
+- JavaScript: `CI=true npm test`, `CI=true npx jest`, `CI=true npx vitest`, `CI=true yarn test`, `CI=true pnpm test`
+- Python: `pytest`, `python -m pytest`, `python -m unittest`
 - Go: `go test ./...`
 - Rust: `cargo test`
-- Java: `mvn test`, `gradle test`
+- Java: `mvn test`, `gradle test`, `./gradlew test`
+- .NET: `dotnet test`
+- Ruby: `rspec`, `bundle exec rspec`, `rake test`
+- PHP: `phpunit`, `./vendor/bin/phpunit`
+- Elixir: `mix test`
+- Dart/Flutter: `flutter test`, `dart test`
 
 ## Enforcement Rules
 
