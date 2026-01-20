@@ -14,6 +14,35 @@ debug_log() {
   echo "[$timestamp] STOP-HOOK: $1" >> "$DEBUG_LOG"
 }
 
+# JSON output helpers (no jq required)
+json_continue() {
+  local msg="${1:-}"
+  if [[ -n "$msg" ]]; then
+    # Escape quotes and backslashes in message
+    msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"continue": true, "systemMessage": "%s"}\n' "$msg"
+  else
+    printf '{"continue": true}\n'
+  fi
+}
+
+json_block() {
+  local reason="$1"
+  local msg="${2:-}"
+  # Escape quotes, backslashes, and newlines
+  reason=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+  msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  printf '{"decision": "block", "reason": "%s", "systemMessage": "%s"}\n' "$reason" "$msg"
+}
+
+# Simple JSON value extractor (no jq required)
+# Usage: json_get "$json_string" "key"
+json_get() {
+  local json="$1"
+  local key="$2"
+  echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed "s/\"$key\"[[:space:]]*:[[:space:]]*\"//" | sed 's/"$//' | head -1
+}
+
 # Ensure .claude directory exists for logging
 mkdir -p .claude
 
@@ -22,6 +51,7 @@ debug_log "=== Stop hook triggered ==="
 # If no state file, allow exit (no active session)
 if [[ ! -f "$STATE_FILE" ]]; then
   debug_log "No state file found - allowing exit (no active session)"
+  json_continue
   exit 0
 fi
 
@@ -30,20 +60,28 @@ debug_log "State file exists: $STATE_FILE"
 # Parse frontmatter from state file
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE")
 
-# Check if loop is active
+# Extract session info
 LOOP_ACTIVE=$(echo "$FRONTMATTER" | grep '^loop_active:' | sed 's/loop_active: *//' || echo "false")
+FEATURE=$(echo "$FRONTMATTER" | grep '^feature:' | sed 's/feature: *//' | sed 's/^"\(.*\)"$/\1/')
+PHASE=$(echo "$FRONTMATTER" | grep '^phase:' | sed 's/phase: *//' || echo "CORE")
+SUBSTATE=$(echo "$FRONTMATTER" | grep '^substate:' | sed 's/substate: *//' || echo "RED")
+TEST_FILES=$(echo "$FRONTMATTER" | grep '^test_files:' | sed 's/test_files: *//' || echo "[]")
+
 debug_log "Loop active: $LOOP_ACTIVE"
+debug_log "Phase: $PHASE, Substate: $SUBSTATE"
+
+# Handle non-loop sessions - approve with summary
 if [[ "$LOOP_ACTIVE" != "true" ]]; then
-  debug_log "Not in loop mode - deferring to prompt-based hook"
+  debug_log "Not in loop mode - approving stop with summary"
+  json_continue "btsc session paused | Phase: $PHASE/$SUBSTATE | Resume with /btsc:tdd-next"
   exit 0
 fi
+
+# From here on, we're handling loop mode
 
 # Parse loop state
 ITERATION=$(echo "$FRONTMATTER" | grep '^iteration:' | sed 's/iteration: *//' || echo "1")
 MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//' || echo "0")
-FEATURE=$(echo "$FRONTMATTER" | grep '^feature:' | sed 's/feature: *//' | sed 's/^"\(.*\)"$/\1/')
-PHASE=$(echo "$FRONTMATTER" | grep '^phase:' | sed 's/phase: *//' || echo "CORE")
-SUBSTATE=$(echo "$FRONTMATTER" | grep '^substate:' | sed 's/substate: *//' || echo "RED")
 
 debug_log "Parsed state: iteration=$ITERATION, max=$MAX_ITERATIONS, phase=$PHASE, substate=$SUBSTATE"
 debug_log "Feature: $FEATURE"
@@ -57,41 +95,39 @@ fi
 # Check max iterations
 if [[ "$MAX_ITERATIONS" -gt 0 ]] && [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
   debug_log "MAX ITERATIONS REACHED: $ITERATION >= $MAX_ITERATIONS - stopping loop"
-  echo "btsc: Max iterations ($MAX_ITERATIONS) reached. Loop stopped."
   # Clean up loop state but keep session for manual continuation
   TEMP_FILE="${STATE_FILE}.tmp.$$"
   sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
   mv "$TEMP_FILE" "$STATE_FILE"
+  json_continue "btsc: Max iterations ($MAX_ITERATIONS) reached. Loop stopped. Continue manually with /btsc:tdd-next"
   exit 0
 fi
 
 debug_log "Max iterations check passed ($ITERATION < $MAX_ITERATIONS or unlimited)"
 
 # Get transcript path and check for completion promise
-TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // empty' 2>/dev/null || echo "")
+TRANSCRIPT_PATH=$(json_get "$HOOK_INPUT" "transcript_path")
 debug_log "Transcript path: ${TRANSCRIPT_PATH:-'(not provided)'}"
 
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
   debug_log "Checking transcript for completion signals..."
-  # Get last assistant message
+  # Get last assistant message content (simplified extraction)
   LAST_LINE=$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null | tail -1 || echo "")
 
   if [[ -n "$LAST_LINE" ]]; then
-    LAST_OUTPUT=$(echo "$LAST_LINE" | jq -r '.message.content |
-      map(select(.type == "text")) |
-      map(.text) |
-      join("\n")' 2>/dev/null || echo "")
+    # Extract text content - look for the promise pattern directly
+    LAST_OUTPUT="$LAST_LINE"
 
     # Check for completion promise - ONLY valid in SIMPLICITY phase
     if echo "$LAST_OUTPUT" | grep -q '<promise>TDD_COMPLETE</promise>'; then
       debug_log "PROMISE DETECTED in output"
       if [[ "$PHASE" == "SIMPLICITY" ]]; then
         debug_log "COMPLETION ACCEPTED - Phase is SIMPLICITY, ending loop"
-        echo "btsc: Detected <promise>TDD_COMPLETE</promise> in SIMPLICITY phase - Loop complete!"
         # Clean up loop state
         TEMP_FILE="${STATE_FILE}.tmp.$$"
         sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
         mv "$TEMP_FILE" "$STATE_FILE"
+        json_continue "btsc: TDD complete! All phases finished."
         exit 0
       else
         # Promise detected but not in SIMPLICITY phase - ignore and continue
@@ -108,10 +144,10 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
       # Check if output indicates completion
       if echo "$LAST_OUTPUT" | grep -qi "simplicity.*complete\|all.*phases.*complete\|tdd.*session.*complete"; then
         debug_log "COMPLETION ACCEPTED - Found completion indicator text"
-        echo "btsc: SIMPLICITY phase complete - Loop finished!"
         TEMP_FILE="${STATE_FILE}.tmp.$$"
         sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
         mv "$TEMP_FILE" "$STATE_FILE"
+        json_continue "btsc: TDD complete! All phases finished."
         exit 0
       fi
     fi
@@ -129,7 +165,7 @@ TEMP_FILE="${STATE_FILE}.tmp.$$"
 sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$STATE_FILE" > "$TEMP_FILE"
 mv "$TEMP_FILE" "$STATE_FILE"
 
-# Build phase-aware prompt to feed back
+# Build phase-aware guidance
 PHASE_GUIDANCE=""
 case "$PHASE" in
   CORE)
@@ -156,8 +192,7 @@ case "$PHASE" in
 esac
 
 # Construct the prompt to feed back
-read -r -d '' LOOP_PROMPT << EOF || true
-## btsc TDD Loop - Iteration $NEXT_ITERATION
+LOOP_PROMPT="## btsc TDD Loop - Iteration $NEXT_ITERATION
 
 **Feature:** $FEATURE
 **Current Phase:** $PHASE
@@ -171,7 +206,7 @@ read -r -d '' LOOP_PROMPT << EOF || true
 - Run tests using Bash
 - Refactor code yourself
 
-**Never say "Your turn" or ask the user to implement anything.**
+**Never say \"Your turn\" or ask the user to implement anything.**
 
 ### Your Task
 
@@ -200,8 +235,7 @@ The loop ONLY ends when:
 
 ---
 
-Continue working on: $FEATURE
-EOF
+Continue working on: $FEATURE"
 
 # Build system message
 SYSTEM_MSG="btsc iteration $NEXT_ITERATION | Phase: $PHASE/$SUBSTATE | To complete: <promise>TDD_COMPLETE</promise>"
@@ -210,13 +244,6 @@ debug_log "Feeding prompt back to Claude with system message: $SYSTEM_MSG"
 debug_log "=== Stop hook complete - blocking exit ==="
 
 # Output JSON to block exit and feed prompt back
-jq -n \
-  --arg prompt "$LOOP_PROMPT" \
-  --arg msg "$SYSTEM_MSG" \
-  '{
-    "decision": "block",
-    "reason": $prompt,
-    "systemMessage": $msg
-  }'
+json_block "$LOOP_PROMPT" "$SYSTEM_MSG"
 
 exit 0
