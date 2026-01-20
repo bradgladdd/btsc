@@ -1,6 +1,6 @@
 # btsc - Big Tests, Small Code
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/bradgladdd/btsc)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/bradgladdd/btsc)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-1.0.33+-purple.svg)](https://claude.ai/code)
 
 A rigorous 5-phase TDD plugin for Claude Code that builds behavioral contracts through comprehensive testing, enabling aggressive code simplification.
