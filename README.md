@@ -57,7 +57,7 @@ Advance to next phase/sub-state. When tests fail, Claude implements code to make
 ```
 
 ### `/btsc:cancel-loop`
-Cancel an active self-looping session (preserves state for manual continuation).
+Cancel an active TDD session (preserves state for manual continuation with `/btsc:tdd-next`).
 
 ```
 > /btsc:cancel-loop
@@ -84,13 +84,11 @@ btsc enforces TDD discipline through hooks:
 
 - **PreToolUse**: Blocks implementation edits during RED phase
 - **PostToolUse**: Tracks test execution and results
-- **Stop**: Prevents stopping with incomplete cycles (or feeds task back in loop mode)
+- **Stop**: Prevents stopping with incomplete cycles, feeds task back until complete
 
-## Self-Looping Mode
+## How It Works
 
-The `/btsc:tdd-loop` command enables autonomous TDD development inspired by the [Ralph Wiggum technique](https://ghuntley.com/ralph/).
-
-### How It Works
+btsc enables autonomous TDD development inspired by the [Ralph Wiggum technique](https://ghuntley.com/ralph/).
 
 1. Start with `/btsc:tdd-loop <feature>`
 2. Claude works through RED → GREEN → REFACTOR
@@ -123,7 +121,7 @@ The loop prioritizes completing CORE first:
 - `/btsc:cancel-loop` - Manually cancel the loop at any time
 - `<promise>TDD_COMPLETE</promise>` - Signal completion (only works in SIMPLICITY phase)
 
-### When to Use Loop Mode
+### When to Use btsc
 
 **Good for:**
 - Well-defined features with clear requirements
@@ -144,7 +142,7 @@ Session state stored in `.claude/tdd.local.md`:
 feature: "user-authentication"
 phase: EDGE
 substate: GREEN
-loop_active: true              # true if in loop mode
+loop_active: true
 iteration: 5                   # current loop iteration
 max_iterations: 50             # 0 = unlimited
 test_files:
@@ -204,11 +202,11 @@ mkdir -p ~/claude-plugins/.claude-plugin
 
 ### Option 3: Install from GitHub
 
-Install directly from the GitHub repository:
+Install from the GitHub marketplace:
 
 ```
-/plugin marketplace add bradgladdd/btsc
-/plugin install btsc@btsc
+/plugin marketplace add bradgladdd/claude-plugins
+/plugin install btsc@bradgladdd
 ```
 
 ### Verify Installation
