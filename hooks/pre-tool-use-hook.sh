@@ -5,8 +5,8 @@ set -euo pipefail
 # Blocks implementation edits during RED phase
 
 HOOK_INPUT=$(cat)
-STATE_FILE=".claude/tdd.local.md"
-DEBUG_LOG=".claude/btsc-debug.log"
+STATE_FILE="${CLAUDE_PROJECT_DIR:-.}/.claude/tdd.local.md"
+DEBUG_LOG="${CLAUDE_PROJECT_DIR:-.}/.claude/btsc-debug.log"
 
 # Ensure .claude directory exists for logging
 mkdir -p .claude 2>/dev/null || true
