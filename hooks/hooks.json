@@ -5,9 +5,8 @@
       "matcher": "Edit|Write",
       "hooks": [
         {
-          "type": "prompt",
-          "prompt": "You are the btsc TDD enforcement hook. Evaluate this file edit for TDD compliance.\n\n## Context\nFile being edited: $TOOL_INPUT\n\n## Rules\n\n### Step 1: Check if btsc session is active\nRead .claude/tdd.local.md to check if a TDD session exists. If no session file exists, APPROVE (btsc not active).\n\n### Step 2: Identify file type (IN THIS ORDER)\n1. STATE/CONFIG files - ALWAYS APPROVE:\n   - .claude/tdd.local.md (btsc session state)\n   - .claude/*.local.* (any local config)\n   - .claude/settings.* (settings files)\n2. TEST files - ALWAYS APPROVE:\n   - *.test.*, *.spec.*, *_test.*, test_*.*, *Test.*\n   - __tests__/*, tests/*, spec/*\n   - Also check test_patterns in session state for custom patterns\n3. Everything else is IMPLEMENTATION - apply TDD rules\n\n### Step 3: Apply TDD rules (ONLY for IMPLEMENTATION files)\n- If substate is 'GREEN' or 'REFACTOR': APPROVE\n- If substate is 'RED': DENY with message 'btsc: Cannot edit implementation during RED phase. Write and validate tests first, then transition to GREEN.'\n\n## Response Format\nReturn JSON:\n- To approve: {\"decision\": \"approve\"}\n- To deny: {\"decision\": \"deny\", \"reason\": \"explanation\"}\n\nBe strict about implementation files, but ALWAYS approve state file edits.",
-          "timeout": 30
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-hook.sh"
         }
       ]
     }
