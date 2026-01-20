@@ -1,12 +1,12 @@
 #!/bin/bash
-# Test harness for btsc pre-tool-use.sh
+# Test harness for btsc pre-tool-use-hook.sh
 # Tests TDD enforcement for file edits
 
 set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
-PRE_HOOK="$PLUGIN_ROOT/hooks/pre-tool-use.sh"
+PRE_HOOK="$PLUGIN_ROOT/hooks/pre-tool-use-hook.sh"
 TEST_DIR=$(mktemp -d)
 PASSED=0
 FAILED=0

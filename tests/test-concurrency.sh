@@ -5,8 +5,8 @@ set +e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
-PRE_HOOK="$PLUGIN_ROOT/hooks/pre-tool-use.sh"
-POST_HOOK="$PLUGIN_ROOT/hooks/post-tool-use.sh"
+PRE_HOOK="$PLUGIN_ROOT/hooks/pre-tool-use-hook.sh"
+POST_HOOK="$PLUGIN_ROOT/hooks/post-tool-use-hook.sh"
 STOP_HOOK="$PLUGIN_ROOT/hooks/stop-hook.sh"
 TEST_DIR=$(mktemp -d)
 PASSED=0
