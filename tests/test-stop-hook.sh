@@ -57,12 +57,12 @@ run_hook() {
 run_test() {
   local name="$1"
   local expected_decision="$2"
-  local expected_pattern="$3"
+  local hook_input="${3:-'{\"transcript_path\": \"\"}'}"
 
   echo -n "Testing: $name... "
 
   local result
-  result=$(run_hook '{"transcript_path": ""}')
+  result=$(run_hook "$hook_input")
   local exit_code=$?
 
   # Check if output contains expected decision
@@ -73,7 +73,7 @@ run_test() {
       return 0
     fi
   elif [[ "$expected_decision" == "allow" ]]; then
-    # Allow means exit 0 with no JSON output (or empty)
+    # Allow means continue: true with no "decision": "block"
     if [[ $exit_code -eq 0 ]] && ! echo "$result" | grep -q '"decision": "block"'; then
       echo -e "${GREEN}PASSED${NC}"
       ((PASSED++))
@@ -159,18 +159,11 @@ EOF
   echo "$transcript_file"
 }
 
-# Helper to run hook with transcript
-run_hook_with_transcript() {
-  local transcript_file="$1"
-  cd "$TEST_DIR"
-  echo "{\"transcript_path\": \"$transcript_file\"}" | bash "$STOP_HOOK" 2>&1
-}
-
 echo ""
 echo -e "${YELLOW}Scenario 9: Promise in SIMPLICITY phase - should complete${NC}"
 create_state_file "SIMPLICITY" "REFACTOR" "true" "5" "10"
 transcript=$(create_transcript_with_promise "TDD_COMPLETE")
-result=$(run_hook_with_transcript "$transcript")
+result=$(run_hook "{\"transcript_path\": \"$transcript\"}")
 if [[ $? -eq 0 ]] && ! echo "$result" | grep -q '"decision": "block"'; then
   echo -e "Testing: Promise in SIMPLICITY allows exit... ${GREEN}PASSED${NC}"
   ((PASSED++))
@@ -184,7 +177,7 @@ echo ""
 echo -e "${YELLOW}Scenario 10: Promise in CORE phase - should be IGNORED${NC}"
 create_state_file "CORE" "GREEN" "true" "2" "10"
 transcript=$(create_transcript_with_promise "TDD_COMPLETE")
-result=$(run_hook_with_transcript "$transcript")
+result=$(run_hook "{\"transcript_path\": \"$transcript\"}")
 if echo "$result" | grep -q '"decision": "block"'; then
   echo -e "Testing: Promise in CORE is ignored, loop continues... ${GREEN}PASSED${NC}"
   ((PASSED++))
@@ -198,7 +191,7 @@ echo ""
 echo -e "${YELLOW}Scenario 11: Promise in EDGE phase - should be IGNORED${NC}"
 create_state_file "EDGE" "REFACTOR" "true" "3" "10"
 transcript=$(create_transcript_with_promise "TDD_COMPLETE")
-result=$(run_hook_with_transcript "$transcript")
+result=$(run_hook "{\"transcript_path\": \"$transcript\"}")
 if echo "$result" | grep -q '"decision": "block"'; then
   echo -e "Testing: Promise in EDGE is ignored, loop continues... ${GREEN}PASSED${NC}"
   ((PASSED++))
@@ -212,7 +205,7 @@ echo ""
 echo -e "${YELLOW}Scenario 12: Wrong promise text - should be IGNORED${NC}"
 create_state_file "SIMPLICITY" "REFACTOR" "true" "5" "10"
 transcript=$(create_transcript_with_promise "WRONG_PROMISE")
-result=$(run_hook_with_transcript "$transcript")
+result=$(run_hook "{\"transcript_path\": \"$transcript\"}")
 if echo "$result" | grep -q '"decision": "block"'; then
   echo -e "Testing: Wrong promise text is ignored... ${GREEN}PASSED${NC}"
   ((PASSED++))
@@ -235,6 +228,145 @@ else
   echo "  Expected: 4, Got: $new_iteration"
   ((FAILED++))
 fi
+echo ""
+
+# ========================================
+# Edge Cases - Empty/Missing Fields
+# ========================================
+echo -e "${YELLOW}Scenario 14: Edge cases - empty/missing input${NC}"
+create_state_file "CORE" "RED" "true" "1" "10"
+run_test "Empty JSON object" "block" "{}"
+run_test "Empty string input" "block" ""
+run_test "Not JSON at all" "block" "this is not json"
+run_test "Null transcript_path" "block" '{"transcript_path": null}'
+echo ""
+
+# ========================================
+# Edge Cases - Alternative Field Names
+# ========================================
+echo -e "${YELLOW}Scenario 15: Alternative transcript field names${NC}"
+create_state_file "SIMPLICITY" "REFACTOR" "true" "5" "10"
+transcript=$(create_transcript_with_promise "TDD_COMPLETE")
+
+echo -n "Testing: transcriptPath (camelCase)... "
+result=$(run_hook "{\"transcriptPath\": \"$transcript\"}")
+if ! echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+
+create_state_file "SIMPLICITY" "REFACTOR" "true" "5" "10"
+echo -n "Testing: transcript (short name)... "
+result=$(run_hook "{\"transcript\": \"$transcript\"}")
+if ! echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+echo ""
+
+# ========================================
+# Edge Cases - Malformed State File
+# ========================================
+echo -e "${YELLOW}Scenario 16: Malformed state file${NC}"
+mkdir -p "$TEST_DIR/.claude"
+
+# Invalid frontmatter
+echo "this is not valid frontmatter" > "$TEST_DIR/.claude/tdd.local.md"
+echo -n "Testing: Invalid frontmatter defaults to non-loop (allow)... "
+result=$(run_hook '{"transcript_path": ""}')
+if ! echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+
+# Empty state file
+echo "" > "$TEST_DIR/.claude/tdd.local.md"
+echo -n "Testing: Empty state file defaults to non-loop (allow)... "
+result=$(run_hook '{"transcript_path": ""}')
+if ! echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+
+# Partial frontmatter - loop_active true but missing other fields
+cat > "$TEST_DIR/.claude/tdd.local.md" << EOF
+---
+loop_active: true
+---
+EOF
+echo -n "Testing: Partial frontmatter with loop_active=true blocks... "
+result=$(run_hook '{"transcript_path": ""}')
+if echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+echo ""
+
+# ========================================
+# Edge Cases - Non-numeric values
+# ========================================
+echo -e "${YELLOW}Scenario 17: Non-numeric iteration/max values${NC}"
+mkdir -p "$TEST_DIR/.claude"
+cat > "$TEST_DIR/.claude/tdd.local.md" << EOF
+---
+feature: "test"
+phase: CORE
+substate: RED
+loop_active: true
+iteration: not_a_number
+max_iterations: also_not_a_number
+---
+EOF
+echo -n "Testing: Non-numeric iteration resets to 1... "
+result=$(run_hook '{"transcript_path": ""}')
+if echo "$result" | grep -q '"decision": "block"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+echo ""
+
+# ========================================
+# All Phases Test
+# ========================================
+echo -e "${YELLOW}Scenario 18: All phases block when in loop${NC}"
+for phase in CORE EDGE SECURITY PERFORMANCE SIMPLICITY; do
+  create_state_file "$phase" "GREEN" "true" "1" "10"
+  run_test "$phase phase blocks in loop" "block"
+done
+echo ""
+
+# ========================================
+# All Substates Test
+# ========================================
+echo -e "${YELLOW}Scenario 19: All substates block when in loop${NC}"
+for substate in RED GREEN REFACTOR; do
+  create_state_file "CORE" "$substate" "true" "1" "10"
+  run_test "CORE/$substate blocks in loop" "block"
+done
 echo ""
 
 echo "========================================"

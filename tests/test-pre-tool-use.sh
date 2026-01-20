@@ -41,9 +41,14 @@ EOF
 }
 
 run_hook() {
-  local file_path="$1"
+  local json_input="$1"
   cd "$TEST_DIR"
-  echo "{\"file_path\": \"$file_path\"}" | bash "$PRE_HOOK" 2>&1
+  echo "$json_input" | bash "$PRE_HOOK" 2>&1
+}
+
+run_hook_file_path() {
+  local file_path="$1"
+  run_hook "{\"file_path\": \"$file_path\"}"
 }
 
 test_approve() {
@@ -52,7 +57,7 @@ test_approve() {
 
   echo -n "Testing: $name... "
   local result
-  result=$(run_hook "$file_path")
+  result=$(run_hook_file_path "$file_path")
 
   if echo "$result" | grep -q '"decision": "approve"'; then
     echo -e "${GREEN}PASSED${NC}"
@@ -73,7 +78,7 @@ test_deny() {
 
   echo -n "Testing: $name... "
   local result
-  result=$(run_hook "$file_path")
+  result=$(run_hook_file_path "$file_path")
 
   if echo "$result" | grep -q '"decision": "deny"'; then
     echo -e "${GREEN}PASSED${NC}"
@@ -83,6 +88,27 @@ test_deny() {
 
   echo -e "${RED}FAILED${NC}"
   echo "  Expected: deny"
+  echo "  Got: $result"
+  ((FAILED++))
+  return 1
+}
+
+test_approve_raw() {
+  local name="$1"
+  local json_input="$2"
+
+  echo -n "Testing: $name... "
+  local result
+  result=$(run_hook "$json_input")
+
+  if echo "$result" | grep -q '"decision": "approve"'; then
+    echo -e "${GREEN}PASSED${NC}"
+    ((PASSED++))
+    return 0
+  fi
+
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: approve"
   echo "  Got: $result"
   ((FAILED++))
   return 1
@@ -226,20 +252,110 @@ test_approve "lib/helper.py in REFACTOR" "lib/helper.py"
 echo ""
 
 # ========================================
-# Edge Cases
+# Edge Cases - Empty/Missing Fields
 # ========================================
-echo -e "${YELLOW}Scenario 12: Edge cases${NC}"
+echo -e "${YELLOW}Scenario 12: Edge cases - empty/missing fields${NC}"
 create_state_file "RED"
 test_approve "Empty file path" ""
+test_approve_raw "Empty JSON object" "{}"
+test_approve_raw "Null file_path" '{"file_path": null}'
+test_approve_raw "Missing file_path entirely" '{"tool": "Write", "other": "data"}'
+echo ""
+
+# ========================================
+# Edge Cases - Alternative Field Names
+# ========================================
+echo -e "${YELLOW}Scenario 13: Edge cases - alternative field names${NC}"
+create_state_file "GREEN"
+test_approve_raw "Uses 'path' instead of 'file_path'" '{"path": "src/app.ts"}'
+test_approve_raw "Uses 'file' instead of 'file_path'" '{"file": "src/app.ts"}'
+
+create_state_file "RED"
+echo -n "Testing: 'path' field blocked in RED... "
+result=$(run_hook '{"path": "src/app.ts"}')
+if echo "$result" | grep -q '"decision": "deny"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: deny"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+
+echo -n "Testing: 'file' field blocked in RED... "
+result=$(run_hook '{"file": "src/app.ts"}')
+if echo "$result" | grep -q '"decision": "deny"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: deny"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+echo ""
+
+# ========================================
+# Edge Cases - Malformed Input
+# ========================================
+echo -e "${YELLOW}Scenario 14: Edge cases - malformed input${NC}"
+create_state_file "RED"
+test_approve_raw "Completely empty input" ""
+test_approve_raw "Not JSON at all" "this is not json"
+test_approve_raw "Partial JSON" '{"file_path": '
+test_approve_raw "Array instead of object" '["src/app.ts"]'
+echo ""
+
+# ========================================
+# Edge Cases - Malformed State File
+# ========================================
+echo -e "${YELLOW}Scenario 15: Edge cases - malformed state file${NC}"
+mkdir -p "$TEST_DIR/.claude"
+echo "this is not valid frontmatter" > "$TEST_DIR/.claude/tdd.local.md"
+echo -n "Testing: Malformed state file defaults to RED... "
+result=$(run_hook_file_path "src/app.ts")
+if echo "$result" | grep -q '"decision": "deny"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: deny (default RED)"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+
+# Empty state file
+echo "" > "$TEST_DIR/.claude/tdd.local.md"
+echo -n "Testing: Empty state file defaults to RED... "
+result=$(run_hook_file_path "src/app.ts")
+if echo "$result" | grep -q '"decision": "deny"'; then
+  echo -e "${GREEN}PASSED${NC}"
+  ((PASSED++))
+else
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: deny (default RED)"
+  echo "  Got: $result"
+  ((FAILED++))
+fi
+echo ""
+
+# ========================================
+# Edge Cases - File Name Tricks
+# ========================================
+echo -e "${YELLOW}Scenario 16: Edge cases - tricky file names${NC}"
+create_state_file "RED"
 test_deny "File with test in name but not pattern" "src/testing_utils.ts"
 test_deny "File with spec in name but not pattern" "src/specification.ts"
 test_approve "Deeply nested test file" "src/features/auth/components/__tests__/Login.test.tsx"
+test_deny "File named Test.ts (no dot after)" "src/Test.ts"
+test_approve "File named SomethingTest.ts" "src/SomethingTest.ts"
 echo ""
 
 # ========================================
 # Cross-Language Coverage
 # ========================================
-echo -e "${YELLOW}Scenario 13: Cross-language test patterns${NC}"
+echo -e "${YELLOW}Scenario 17: Cross-language test patterns${NC}"
 create_state_file "RED"
 
 # JavaScript/TypeScript

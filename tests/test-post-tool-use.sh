@@ -52,6 +52,12 @@ run_hook() {
   echo "{\"command\": \"$command\", \"exit_code\": $exit_code}" | bash "$POST_HOOK" 2>&1
 }
 
+run_hook_raw() {
+  local json_input="$1"
+  cd "$TEST_DIR"
+  echo "$json_input" | bash "$POST_HOOK" 2>&1
+}
+
 # Test runner for empty JSON response
 test_empty_json() {
   local name="$1"
@@ -64,6 +70,28 @@ test_empty_json() {
   result=$(run_hook "$command" "$exit_code")
 
   # Should return exactly {} or empty
+  if [[ "$result" == "{}" ]] || [[ -z "$result" ]]; then
+    echo -e "${GREEN}PASSED${NC}"
+    ((PASSED++))
+    return 0
+  fi
+
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected: {}"
+  echo "  Got: $result"
+  ((FAILED++))
+  return 1
+}
+
+test_empty_json_raw() {
+  local name="$1"
+  local json_input="$2"
+
+  echo -n "Testing: $name... "
+
+  local result
+  result=$(run_hook_raw "$json_input")
+
   if [[ "$result" == "{}" ]] || [[ -z "$result" ]]; then
     echo -e "${GREEN}PASSED${NC}"
     ((PASSED++))
@@ -90,6 +118,29 @@ test_system_message() {
   result=$(run_hook "$command" "$exit_code")
 
   # Should contain systemMessage with expected pattern
+  if echo "$result" | grep -q '"systemMessage"' && echo "$result" | grep -qi "$expected_pattern"; then
+    echo -e "${GREEN}PASSED${NC}"
+    ((PASSED++))
+    return 0
+  fi
+
+  echo -e "${RED}FAILED${NC}"
+  echo "  Expected pattern: $expected_pattern"
+  echo "  Got: $result"
+  ((FAILED++))
+  return 1
+}
+
+test_system_message_raw() {
+  local name="$1"
+  local json_input="$2"
+  local expected_pattern="$3"
+
+  echo -n "Testing: $name... "
+
+  local result
+  result=$(run_hook_raw "$json_input")
+
   if echo "$result" | grep -q '"systemMessage"' && echo "$result" | grep -qi "$expected_pattern"; then
     echo -e "${GREEN}PASSED${NC}"
     ((PASSED++))
@@ -155,6 +206,8 @@ test_system_message "pytest detected" "pytest" 0 "GREEN"
 test_system_message "pytest with args" "pytest -v tests/" 0 "GREEN"
 test_system_message "python -m pytest detected" "python -m pytest" 0 "GREEN"
 test_system_message "python -m unittest detected" "python -m unittest" 0 "GREEN"
+test_system_message "python3 -m pytest detected" "python3 -m pytest" 0 "GREEN"
+test_system_message "python3 -m unittest detected" "python3 -m unittest" 0 "GREEN"
 
 # Go
 test_system_message "go test detected" "go test ./..." 0 "GREEN"
@@ -248,6 +301,87 @@ test_system_message "Exit code 2 = fail" "npm test" 2 "FAILED"
 
 create_state_file "CORE" "GREEN"
 test_system_message "Exit code 127 = fail" "npm test" 127 "FAILED"
+echo ""
+
+# ========================================
+# Edge Cases - Empty/Missing Fields
+# ========================================
+echo -e "${YELLOW}Scenario 9: Edge cases - empty/missing fields${NC}"
+create_state_file "CORE" "GREEN"
+test_empty_json_raw "Empty JSON object" "{}"
+test_empty_json_raw "Missing command field" '{"exit_code": 0}'
+test_empty_json_raw "Null command" '{"command": null, "exit_code": 0}'
+test_empty_json_raw "Empty command string" '{"command": "", "exit_code": 0}'
+echo ""
+
+# ========================================
+# Edge Cases - Alternative Field Names
+# ========================================
+echo -e "${YELLOW}Scenario 10: Alternative exit code field names${NC}"
+create_state_file "CORE" "GREEN"
+test_system_message_raw "Uses returncode" '{"command": "npm test", "returncode": 0}' "PASSED"
+test_system_message_raw "Uses exitCode (camelCase)" '{"command": "npm test", "exitCode": 0}' "PASSED"
+test_system_message_raw "Uses status" '{"command": "npm test", "status": 0}' "PASSED"
+
+create_state_file "CORE" "GREEN"
+test_system_message_raw "returncode fail" '{"command": "npm test", "returncode": 1}' "FAILED"
+test_system_message_raw "exitCode fail" '{"command": "npm test", "exitCode": 1}' "FAILED"
+test_system_message_raw "status fail" '{"command": "npm test", "status": 1}' "FAILED"
+echo ""
+
+# ========================================
+# Edge Cases - Malformed Input
+# ========================================
+echo -e "${YELLOW}Scenario 11: Edge cases - malformed input${NC}"
+create_state_file "CORE" "RED"
+test_empty_json_raw "Completely empty input" ""
+test_empty_json_raw "Not JSON at all" "this is not json"
+test_empty_json_raw "Partial JSON" '{"command": '
+test_empty_json_raw "Array instead of object" '["npm test", 0]'
+echo ""
+
+# ========================================
+# Edge Cases - Malformed State File
+# ========================================
+echo -e "${YELLOW}Scenario 12: Edge cases - malformed state file${NC}"
+mkdir -p "$TEST_DIR/.claude"
+
+# Invalid frontmatter - should default to RED
+echo "this is not valid frontmatter" > "$TEST_DIR/.claude/tdd.local.md"
+test_system_message "Malformed state defaults to RED (pass=problem)" "npm test" 0 "PROBLEM"
+
+# Empty state file - should default to RED
+echo "" > "$TEST_DIR/.claude/tdd.local.md"
+test_system_message "Empty state defaults to RED (pass=problem)" "npm test" 0 "PROBLEM"
+
+# State file with only partial frontmatter
+cat > "$TEST_DIR/.claude/tdd.local.md" << EOF
+---
+feature: "test"
+---
+EOF
+test_system_message "Partial frontmatter defaults to RED" "npm test" 0 "PROBLEM"
+echo ""
+
+# ========================================
+# Edge Cases - Missing Exit Code
+# ========================================
+echo -e "${YELLOW}Scenario 13: Edge cases - missing exit code${NC}"
+create_state_file "CORE" "GREEN"
+# No exit code should default to failed (safer assumption)
+test_system_message_raw "Missing exit code defaults to fail" '{"command": "npm test"}' "FAILED"
+echo ""
+
+# ========================================
+# Edge Cases - Command Variations
+# ========================================
+echo -e "${YELLOW}Scenario 14: Command variations${NC}"
+create_state_file "CORE" "GREEN"
+test_system_message "npm test with extra args" "npm test -- --coverage" 0 "PASSED"
+test_system_message "pytest with path" "pytest tests/unit/" 0 "PASSED"
+test_system_message "jest with config" "npx jest --config jest.config.js" 0 "PASSED"
+test_system_message "go test verbose" "go test -v ./..." 0 "PASSED"
+test_system_message "cargo test specific" "cargo test test_name" 0 "PASSED"
 echo ""
 
 echo "========================================"

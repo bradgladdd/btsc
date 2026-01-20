@@ -8,10 +8,12 @@ HOOK_INPUT=$(cat)
 STATE_FILE=".claude/tdd.local.md"
 DEBUG_LOG=".claude/btsc-debug.log"
 
+# Ensure .claude directory exists for logging
+mkdir -p .claude 2>/dev/null || true
+
 # Debug logging function
 debug_log() {
-  local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  echo "[$timestamp] STOP-HOOK: $1" >> "$DEBUG_LOG"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP-HOOK: $1" >> "$DEBUG_LOG"
 }
 
 # JSON output helpers (no jq required)
@@ -19,7 +21,7 @@ json_continue() {
   local msg="${1:-}"
   if [[ -n "$msg" ]]; then
     # Escape quotes and backslashes in message
-    msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g' || echo "")
     printf '{"continue": true, "systemMessage": "%s"}\n' "$msg"
   else
     printf '{"continue": true}\n'
@@ -30,8 +32,8 @@ json_block() {
   local reason="$1"
   local msg="${2:-}"
   # Escape quotes, backslashes, and newlines
-  reason=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-  msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  reason=$(printf '%s' "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g' || echo "")
+  msg=$(printf '%s' "$msg" | sed 's/\\/\\\\/g; s/"/\\"/g' || echo "")
   printf '{"decision": "block", "reason": "%s", "systemMessage": "%s"}\n' "$reason" "$msg"
 }
 
@@ -40,13 +42,11 @@ json_block() {
 json_get() {
   local json="$1"
   local key="$2"
-  echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed "s/\"$key\"[[:space:]]*:[[:space:]]*\"//" | sed 's/"$//' | head -1
+  echo "$json" | grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" 2>/dev/null | sed "s/\"$key\"[[:space:]]*:[[:space:]]*\"//" 2>/dev/null | sed 's/"$//' 2>/dev/null | head -1 || echo ""
 }
 
-# Ensure .claude directory exists for logging
-mkdir -p .claude
-
 debug_log "=== Stop hook triggered ==="
+debug_log "INPUT: $HOOK_INPUT"
 
 # If no state file, allow exit (no active session)
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -58,14 +58,20 @@ fi
 debug_log "State file exists: $STATE_FILE"
 
 # Parse frontmatter from state file
-FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE")
+FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$STATE_FILE" 2>/dev/null || echo "")
 
-# Extract session info
-LOOP_ACTIVE=$(echo "$FRONTMATTER" | grep '^loop_active:' | sed 's/loop_active: *//' || echo "false")
-FEATURE=$(echo "$FRONTMATTER" | grep '^feature:' | sed 's/feature: *//' | sed 's/^"\(.*\)"$/\1/')
-PHASE=$(echo "$FRONTMATTER" | grep '^phase:' | sed 's/phase: *//' || echo "CORE")
-SUBSTATE=$(echo "$FRONTMATTER" | grep '^substate:' | sed 's/substate: *//' || echo "RED")
-TEST_FILES=$(echo "$FRONTMATTER" | grep '^test_files:' | sed 's/test_files: *//' || echo "[]")
+# Extract session info with fallbacks
+LOOP_ACTIVE=$(echo "$FRONTMATTER" | grep '^loop_active:' 2>/dev/null | sed 's/loop_active: *//' || echo "false")
+FEATURE=$(echo "$FRONTMATTER" | grep '^feature:' 2>/dev/null | sed 's/feature: *//' | sed 's/^"\(.*\)"$/\1/' || echo "unknown feature")
+PHASE=$(echo "$FRONTMATTER" | grep '^phase:' 2>/dev/null | sed 's/phase: *//' || echo "CORE")
+SUBSTATE=$(echo "$FRONTMATTER" | grep '^substate:' 2>/dev/null | sed 's/substate: *//' || echo "RED")
+TEST_FILES=$(echo "$FRONTMATTER" | grep '^test_files:' 2>/dev/null | sed 's/test_files: *//' || echo "[]")
+
+# Apply defaults for empty values
+LOOP_ACTIVE=${LOOP_ACTIVE:-false}
+FEATURE=${FEATURE:-unknown feature}
+PHASE=${PHASE:-CORE}
+SUBSTATE=${SUBSTATE:-RED}
 
 debug_log "Loop active: $LOOP_ACTIVE"
 debug_log "Phase: $PHASE, Substate: $SUBSTATE"
@@ -79,17 +85,27 @@ fi
 
 # From here on, we're handling loop mode
 
-# Parse loop state
-ITERATION=$(echo "$FRONTMATTER" | grep '^iteration:' | sed 's/iteration: *//' || echo "1")
-MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//' || echo "0")
+# Parse loop state with fallbacks
+ITERATION=$(echo "$FRONTMATTER" | grep '^iteration:' 2>/dev/null | sed 's/iteration: *//' || echo "1")
+MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' 2>/dev/null | sed 's/max_iterations: *//' || echo "0")
+
+# Apply defaults for empty values
+ITERATION=${ITERATION:-1}
+MAX_ITERATIONS=${MAX_ITERATIONS:-0}
 
 debug_log "Parsed state: iteration=$ITERATION, max=$MAX_ITERATIONS, phase=$PHASE, substate=$SUBSTATE"
 debug_log "Feature: $FEATURE"
 
 # Validate iteration is numeric
 if [[ ! "$ITERATION" =~ ^[0-9]+$ ]]; then
-  echo "Warning: btsc loop state corrupted, resetting iteration count" >&2
+  debug_log "Warning: iteration not numeric, resetting to 1"
   ITERATION=1
+fi
+
+# Validate max_iterations is numeric
+if [[ ! "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
+  debug_log "Warning: max_iterations not numeric, setting to 0 (unlimited)"
+  MAX_ITERATIONS=0
 fi
 
 # Check max iterations
@@ -97,16 +113,22 @@ if [[ "$MAX_ITERATIONS" -gt 0 ]] && [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; th
   debug_log "MAX ITERATIONS REACHED: $ITERATION >= $MAX_ITERATIONS - stopping loop"
   # Clean up loop state but keep session for manual continuation
   TEMP_FILE="${STATE_FILE}.tmp.$$"
-  sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
-  mv "$TEMP_FILE" "$STATE_FILE"
+  sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE" 2>/dev/null && mv "$TEMP_FILE" "$STATE_FILE" || true
   json_continue "btsc: Max iterations ($MAX_ITERATIONS) reached. Loop stopped. Continue manually with /btsc:tdd-next"
   exit 0
 fi
 
 debug_log "Max iterations check passed ($ITERATION < $MAX_ITERATIONS or unlimited)"
 
-# Get transcript path and check for completion promise
+# Get transcript path - try multiple field names
 TRANSCRIPT_PATH=$(json_get "$HOOK_INPUT" "transcript_path")
+if [[ -z "$TRANSCRIPT_PATH" ]]; then
+  TRANSCRIPT_PATH=$(json_get "$HOOK_INPUT" "transcriptPath")
+fi
+if [[ -z "$TRANSCRIPT_PATH" ]]; then
+  TRANSCRIPT_PATH=$(json_get "$HOOK_INPUT" "transcript")
+fi
+
 debug_log "Transcript path: ${TRANSCRIPT_PATH:-'(not provided)'}"
 
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
@@ -119,14 +141,13 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     LAST_OUTPUT="$LAST_LINE"
 
     # Check for completion promise - ONLY valid in SIMPLICITY phase
-    if echo "$LAST_OUTPUT" | grep -q '<promise>TDD_COMPLETE</promise>'; then
+    if echo "$LAST_OUTPUT" | grep -q '<promise>TDD_COMPLETE</promise>' 2>/dev/null; then
       debug_log "PROMISE DETECTED in output"
       if [[ "$PHASE" == "SIMPLICITY" ]]; then
         debug_log "COMPLETION ACCEPTED - Phase is SIMPLICITY, ending loop"
         # Clean up loop state
         TEMP_FILE="${STATE_FILE}.tmp.$$"
-        sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
-        mv "$TEMP_FILE" "$STATE_FILE"
+        sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE" 2>/dev/null && mv "$TEMP_FILE" "$STATE_FILE" || true
         json_continue "btsc: TDD complete! All phases finished."
         exit 0
       else
@@ -142,11 +163,10 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     if [[ "$PHASE" == "SIMPLICITY" ]] && [[ "$SUBSTATE" == "REFACTOR" ]]; then
       debug_log "In SIMPLICITY/REFACTOR - checking for completion indicators"
       # Check if output indicates completion
-      if echo "$LAST_OUTPUT" | grep -qi "simplicity.*complete\|all.*phases.*complete\|tdd.*session.*complete"; then
+      if echo "$LAST_OUTPUT" | grep -qi "simplicity.*complete\|all.*phases.*complete\|tdd.*session.*complete" 2>/dev/null; then
         debug_log "COMPLETION ACCEPTED - Found completion indicator text"
         TEMP_FILE="${STATE_FILE}.tmp.$$"
-        sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE"
-        mv "$TEMP_FILE" "$STATE_FILE"
+        sed 's/^loop_active: true/loop_active: false/' "$STATE_FILE" > "$TEMP_FILE" 2>/dev/null && mv "$TEMP_FILE" "$STATE_FILE" || true
         json_continue "btsc: TDD complete! All phases finished."
         exit 0
       fi
@@ -162,8 +182,11 @@ debug_log "LOOP CONTINUING - incrementing to iteration $NEXT_ITERATION"
 
 # Update state file atomically
 TEMP_FILE="${STATE_FILE}.tmp.$$"
-sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$STATE_FILE" > "$TEMP_FILE"
-mv "$TEMP_FILE" "$STATE_FILE"
+if sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$STATE_FILE" > "$TEMP_FILE" 2>/dev/null; then
+  mv "$TEMP_FILE" "$STATE_FILE" || true
+else
+  debug_log "Warning: Failed to update iteration in state file"
+fi
 
 # Build phase-aware guidance
 PHASE_GUIDANCE=""
@@ -188,6 +211,9 @@ case "$PHASE" in
     ;;
   SIMPLICITY)
     PHASE_GUIDANCE="Aggressively simplify the code while keeping all tests green."
+    ;;
+  *)
+    PHASE_GUIDANCE="Continue TDD process."
     ;;
 esac
 
