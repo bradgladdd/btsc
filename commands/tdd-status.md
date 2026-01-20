@@ -10,7 +10,7 @@ Display the current btsc TDD session status.
 ### Step 1: Check for Active Session
 
 Read .claude/tdd.local.md:
-- If file doesn't exist: Report "No active btsc session. Use /tdd to start one."
+- If file doesn't exist: Report "No active btsc session. Use /btsc:tdd-loop to start one."
 - If file exists: Parse the YAML frontmatter for session state
 
 ### Step 2: Gather Session Information

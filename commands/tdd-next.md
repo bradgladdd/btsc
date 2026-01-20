@@ -5,12 +5,26 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task
 
 Advance the btsc TDD session to the next phase or sub-state. This is the primary development trigger.
 
+## IMPORTANT: Check Loop Mode
+
+First, read .claude/tdd.local.md and check if `loop_active: true`.
+
+**If in loop mode (loop_active: true):**
+- YOU must do ALL work yourself - write tests, write implementation, run tests
+- **NEVER ask the user to write code**
+- **NEVER say "Your turn" or wait for user input**
+- Use Write/Edit tools to create all code files
+- Use Bash to run tests
+- Continue working until the phase is complete
+
+**If NOT in loop mode:** You may provide guidance and let the user write code if appropriate.
+
 ## Advancement Logic
 
 ### Step 1: Load Current State
 
 Read .claude/tdd.local.md:
-- If no session exists: Report error, suggest /tdd to start
+- If no session exists: Report error, suggest /btsc:tdd-loop to start
 - Parse current phase, substate, and test files
 
 ### Step 2: Run Tests
